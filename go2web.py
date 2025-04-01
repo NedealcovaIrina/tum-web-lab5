@@ -2,12 +2,40 @@
 import sys
 import urllib.parse
 import requests
+import re
+
+def clean_html(text):
+    """Remove HTML tags and clean up the text for better readability."""
+    # Remove script and style sections
+    text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
+    text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+    
+    # Replace HTML entities
+    text = re.sub(r'&nbsp;', ' ', text)
+    text = re.sub(r'&amp;', '&', text)
+    text = re.sub(r'&lt;', '<', text)
+    text = re.sub(r'&gt;', '>', text)
+    text = re.sub(r'&quot;', '"', text)
+    
+    # Remove remaining HTML tags
+    text = re.sub(r'<[^>]*>', '', text)
+    
+    # Clean up whitespace
+    text = re.sub(r'\s+', ' ', text)
+    text = text.strip()
+    
+    return text
 
 def make_http_request(url):
-    """Make an HTTP GET request to the specified URL."""
+    """Make an HTTP GET request to the specified URL and clean the HTML response."""
     try:
         response = requests.get(url)
-        return response.text
+        if response.status_code == 200:
+            # Clean HTML if content is text/html
+            if 'text/html' in response.headers.get('content-type', ''):
+                return clean_html(response.text)
+            return response.text
+        return f"Error: Status code {response.status_code}"
     except Exception as e:
         return f"Error: {e}"
 
@@ -38,7 +66,7 @@ def main():
     
     if command == "-h":
         print("Usage:")
-        print("  go2web -u <URL>         # Fetches and prints content from the URL")
+        print("  go2web -u <URL>         # Fetches and prints cleaned content from the URL")
         print("  go2web -s <search-term> # Searches the term on DuckDuckGo and shows top 10 results")
         print("  go2web -h               # Displays this help message")
         
