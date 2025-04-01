@@ -3,6 +3,56 @@ import sys
 import urllib.parse
 import requests
 import re
+import os
+import json
+import time
+from pathlib import Path
+
+# Cache configuration
+CACHE_DIR = Path.home() / ".go2web_cache"
+CACHE_EXPIRATION = 600  # 10 minutes
+MAX_REDIRECTS = 5
+
+def init_cache():
+    """Initialize the cache directory if it doesn't exist."""
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def generate_cache_key(url):
+    """Generate a unique, filesystem-safe cache key for a given URL."""
+    return hashlib.sha256(url.encode()).hexdigest()
+
+def get_from_cache(url):
+    """Retrieve cached response from file if it is still valid."""
+    cache_key = generate_cache_key(url)
+    cache_file = CACHE_DIR / f"{cache_key}.json"
+    
+    try:
+        if cache_file.exists():
+            with open(cache_file, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+                # Check if cache has expired
+                if time.time() - cache_data['timestamp'] < CACHE_EXPIRATION:
+                    print(f"[CACHE HIT] Returning cached response for {url}")
+                    return cache_data['content']
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Cache read error: {e}")
+    return None
+
+def store_in_cache(url, response):
+    """Store the response in a file cache with a timestamp."""
+    cache_key = generate_cache_key(url)
+    cache_file = CACHE_DIR / f"{cache_key}.json"
+    
+    try:
+        cache_data = {
+            'timestamp': time.time(),
+            'url': url,
+            'content': response
+        }
+        with open(cache_file, 'w', encoding='utf-8') as f:
+            json.dump(cache_data, f, ensure_ascii=False)
+    except IOError as e:
+        print(f"Cache write error: {e}")
 
 def clean_html(text):
     """Remove HTML tags and clean up the text for better readability."""
@@ -24,28 +74,28 @@ def clean_html(text):
 
 def make_http_request(url):
     """Make an HTTP GET request to the specified URL and clean the HTML response."""
-    max_redirects = 5  # Maximum number of redirects to follow
+    # First check cache
+    cached_response = get_from_cache(url)
+    if cached_response:
+        return cached_response
+    
+    max_redirects = 5
     current_redirects = 0
     
     while True:
         try:
-            # Make request with redirect tracking
             response = requests.get(url, allow_redirects=False)
             
-            # Check if this is a redirect
             if response.is_redirect or response.is_permanent_redirect:
                 current_redirects += 1
                 
-                # Check for redirect limit
                 if current_redirects > max_redirects:
                     return f"Error: Too many redirects (limit: {max_redirects})"
                 
-                # Get the redirect URL
                 redirect_url = response.headers.get('Location')
                 if not redirect_url:
                     return "Error: Redirect location not specified"
                 
-                # Handle relative URLs
                 if not redirect_url.startswith(('http://', 'https://')):
                     redirect_url = urllib.parse.urljoin(url, redirect_url)
                 
@@ -53,14 +103,13 @@ def make_http_request(url):
                 url = redirect_url
                 continue
             
-            # Handle successful response
             if response.status_code == 200:
-                # Clean HTML if content is text/html
+                content = response.text
                 if 'text/html' in response.headers.get('content-type', ''):
-                    return clean_html(response.text)
-                return response.text
+                    content = clean_html(content)
+                store_in_cache(url, content)
+                return content
             
-            # Handle other status codes
             return f"Error: Status code {response.status_code}"
             
         except Exception as e:
@@ -85,6 +134,8 @@ def search_duckduckgo(query):
 
 def main():
     """Command-line argument handling."""
+    init_cache()  # Initialize cache directory
+    
     if len(sys.argv) < 2:
         print("Usage: go2web -u <URL> | -s <search-term> | -h")
         sys.exit(1)
@@ -96,6 +147,7 @@ def main():
         print("  go2web -u <URL>         # Fetches and prints cleaned content from the URL")
         print("  go2web -s <search-term> # Searches the term on DuckDuckGo and shows top 10 results")
         print("  go2web -h               # Displays this help message")
+        print(f"  Cache directory: {CACHE_DIR}")
         
     elif command == "-u" and len(sys.argv) > 2:
         url = sys.argv[2]
