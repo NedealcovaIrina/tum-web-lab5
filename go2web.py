@@ -9,35 +9,62 @@ def clean_html(text):
     # Remove script and style sections
     text = re.sub(r'<script[^>]*>.*?</script>', '', text, flags=re.DOTALL)
     text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
-    
     # Replace HTML entities
     text = re.sub(r'&nbsp;', ' ', text)
     text = re.sub(r'&amp;', '&', text)
     text = re.sub(r'&lt;', '<', text)
     text = re.sub(r'&gt;', '>', text)
     text = re.sub(r'&quot;', '"', text)
-    
     # Remove remaining HTML tags
     text = re.sub(r'<[^>]*>', '', text)
-    
     # Clean up whitespace
     text = re.sub(r'\s+', ' ', text)
     text = text.strip()
-    
     return text
 
 def make_http_request(url):
     """Make an HTTP GET request to the specified URL and clean the HTML response."""
-    try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            # Clean HTML if content is text/html
-            if 'text/html' in response.headers.get('content-type', ''):
-                return clean_html(response.text)
-            return response.text
-        return f"Error: Status code {response.status_code}"
-    except Exception as e:
-        return f"Error: {e}"
+    max_redirects = 5  # Maximum number of redirects to follow
+    current_redirects = 0
+    
+    while True:
+        try:
+            # Make request with redirect tracking
+            response = requests.get(url, allow_redirects=False)
+            
+            # Check if this is a redirect
+            if response.is_redirect or response.is_permanent_redirect:
+                current_redirects += 1
+                
+                # Check for redirect limit
+                if current_redirects > max_redirects:
+                    return f"Error: Too many redirects (limit: {max_redirects})"
+                
+                # Get the redirect URL
+                redirect_url = response.headers.get('Location')
+                if not redirect_url:
+                    return "Error: Redirect location not specified"
+                
+                # Handle relative URLs
+                if not redirect_url.startswith(('http://', 'https://')):
+                    redirect_url = urllib.parse.urljoin(url, redirect_url)
+                
+                print(f"Redirecting to: {redirect_url}")
+                url = redirect_url
+                continue
+            
+            # Handle successful response
+            if response.status_code == 200:
+                # Clean HTML if content is text/html
+                if 'text/html' in response.headers.get('content-type', ''):
+                    return clean_html(response.text)
+                return response.text
+            
+            # Handle other status codes
+            return f"Error: Status code {response.status_code}"
+            
+        except Exception as e:
+            return f"Error: {e}"
 
 def search_duckduckgo(query):
     """Search DuckDuckGo and return the first 10 results."""
